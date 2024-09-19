@@ -1,7 +1,8 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <time.h>
+#include <iostream>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+#include <sstream>
 #include <sqlite3.h>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -16,7 +17,7 @@ sqlite3 *db;
 char *zErrMsg = 0;
 
 void execute_sql(const char *sql, char *result, size_t result_size) {
-    int rc = sqlite3_exec(db, sql, NULL, 0, &zErrMsg);
+    int rc = sqlite3_exec(db, sql, nullptr, 0, &zErrMsg);
     if (rc != SQLITE_OK) {
         snprintf(result, result_size, "SQL error: %s", zErrMsg);
         sqlite3_free(zErrMsg);
@@ -28,8 +29,8 @@ void execute_sql(const char *sql, char *result, size_t result_size) {
 void initialize_database() {
     int rc = sqlite3_open("bank.db", &db);
     if (rc) {
-        fprintf(stderr, "Can't open database: %s\n", sqlite3_errmsg(db));
-        exit(0);
+        std::cerr << "Can't open database: " << sqlite3_errmsg(db) << std::endl;
+        exit(EXIT_FAILURE);
     }
 
     const char *sql_create_accounts = "CREATE TABLE IF NOT EXISTS accounts ("
@@ -53,16 +54,16 @@ int generate_account_number() {
     return 1000000 + rand() % 9000000;
 }
 
-void create_account(const char *name, char *result, size_t result_size) {
+void create_account(const std::string &name, char *result, size_t result_size) {
     int account_number;
     char sql[MAX_SQL_LENGTH];
 
     do {
         account_number = generate_account_number();
         snprintf(sql, MAX_SQL_LENGTH, "SELECT * FROM accounts WHERE account_number = %d;", account_number);
-    } while (sqlite3_exec(db, sql, NULL, 0, &zErrMsg) == SQLITE_ROW);
+    } while (sqlite3_exec(db, sql, nullptr, 0, &zErrMsg) == SQLITE_ROW);
 
-    snprintf(sql, MAX_SQL_LENGTH, "INSERT INTO accounts (account_number, name, balance) VALUES (%d, '%s', 0.0);", account_number, name);
+    snprintf(sql, MAX_SQL_LENGTH, "INSERT INTO accounts (account_number, name, balance) VALUES (%d, '%s', 0.0);", account_number, name.c_str());
     execute_sql(sql, result, result_size);
 
     snprintf(result, result_size, "Account created successfully. Account number: %d", account_number);
@@ -85,7 +86,7 @@ void withdraw(int account_number, double amount, char *result, size_t result_siz
 
     snprintf(sql, MAX_SQL_LENGTH, "SELECT balance FROM accounts WHERE account_number = %d;", account_number);
     sqlite3_stmt *stmt;
-    if (sqlite3_prepare_v2(db, sql, -1, &stmt, 0) == SQLITE_OK) {
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
         if (sqlite3_step(stmt) == SQLITE_ROW) {
             double balance = sqlite3_column_double(stmt, 0);
             if (balance >= amount) {
@@ -109,9 +110,9 @@ void withdraw(int account_number, double amount, char *result, size_t result_siz
 void get_transactions(int account_number, char *result, size_t result_size) {
     char sql[MAX_SQL_LENGTH];
     snprintf(sql, MAX_SQL_LENGTH, "SELECT * FROM transactions WHERE account_number = %d ORDER BY timestamp;", account_number);
-    
+
     sqlite3_stmt *stmt;
-    if (sqlite3_prepare_v2(db, sql, -1, &stmt, 0) == SQLITE_OK) {
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
         char *ptr = result;
         size_t remaining = result_size;
         int written = snprintf(ptr, remaining, "Transactions for account %d:\n", account_number);
@@ -119,9 +120,9 @@ void get_transactions(int account_number, char *result, size_t result_size) {
         remaining -= written;
 
         while (sqlite3_step(stmt) == SQLITE_ROW && remaining > 0) {
-            const char *type = (const char *)sqlite3_column_text(stmt, 2);
+            const char *type = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 2));
             double amount = sqlite3_column_double(stmt, 3);
-            const char *timestamp = (const char *)sqlite3_column_text(stmt, 4);
+            const char *timestamp = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 4));
             written = snprintf(ptr, remaining, "%s - %s: %.2f\n", timestamp, type, amount);
             ptr += written;
             remaining -= written;
@@ -134,7 +135,7 @@ void handle_client(int client_socket) {
     char buffer[MAX_BUFFER_SIZE] = {0};
     char response[MAX_BUFFER_SIZE] = {0};
 
-    while (1) {
+    while (true) {
         memset(buffer, 0, sizeof(buffer));
         memset(response, 0, sizeof(response));
 
@@ -143,35 +144,32 @@ void handle_client(int client_socket) {
             break;
         }
 
-        char command[20];
+        std::string command;
         int account_number;
         double amount;
-        char name[50];
+        std::string name;
 
-        if (sscanf(buffer, "%s", command) == 1) {
-            if (strcmp(command, "CREATE") == 0) {
-                if (sscanf(buffer, "%*s %s", name) == 1) {
-                    create_account(name, response, sizeof(response));
-                }
-            } else if (strcmp(command, "DEPOSIT") == 0) {
-                if (sscanf(buffer, "%*s %d %lf", &account_number, &amount) == 2) {
-                    deposit(account_number, amount, response, sizeof(response));
-                }
-            } else if (strcmp(command, "WITHDRAW") == 0) {
-                if (sscanf(buffer, "%*s %d %lf", &account_number, &amount) == 2) {
-                    withdraw(account_number, amount, response, sizeof(response));
-                }
-            } else if (strcmp(command, "TRANSACTIONS") == 0) {
-                if (sscanf(buffer, "%*s %d", &account_number) == 1) {
-                    get_transactions(account_number, response, sizeof(response));
-                }
-            } else if (strcmp(command, "EXIT") == 0) {
-                strcpy(response, "Goodbye!");
-                send(client_socket, response, strlen(response), 0);
-                break;
-            } else {
-                strcpy(response, "Invalid command");
-            }
+        std::istringstream iss(buffer);
+        iss >> command;
+
+        if (command == "CREATE") {
+            iss >> name;
+            create_account(name, response, sizeof(response));
+        } else if (command == "DEPOSIT") {
+            iss >> account_number >> amount;
+            deposit(account_number, amount, response, sizeof(response));
+        } else if (command == "WITHDRAW") {
+            iss >> account_number >> amount;
+            withdraw(account_number, amount, response, sizeof(response));
+        } else if (command == "TRANSACTIONS") {
+            iss >> account_number;
+            get_transactions(account_number, response, sizeof(response));
+        } else if (command == "EXIT") {
+            strcpy(response, "Goodbye!");
+            send(client_socket, response, strlen(response), 0);
+            break;
+        } else {
+            strcpy(response, "Invalid command");
         }
 
         send(client_socket, response, strlen(response), 0);
@@ -181,7 +179,7 @@ void handle_client(int client_socket) {
 }
 
 int main() {
-    srand(time(NULL));
+    srand(time(nullptr));
     initialize_database();
 
     int server_fd, new_socket;
@@ -213,15 +211,15 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    printf("Bank server is running on port %d\n", PORT);
+    std::cout << "Bank server is running on port " << PORT << std::endl;
 
-    while (1) {
+    while (true) {
         if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t *)&addrlen)) < 0) {
             perror("accept");
             continue;
         }
 
-        printf("New client connected: %s:%d\n", inet_ntoa(address.sin_addr), ntohs(address.sin_port));
+        std::cout << "New client connected: " << inet_ntoa(address.sin_addr) << ":" << ntohs(address.sin_port) << std::endl;
 
         pid_t pid = fork();
         if (pid == 0) {
