@@ -13,6 +13,8 @@
 #define MAX_BUFFER_SIZE 1024
 #define PORT 8080
 
+using namespace std;
+
 sqlite3 *db;
 char *zErrMsg = 0;
 
@@ -29,7 +31,7 @@ void execute_sql(const char *sql, char *result, size_t result_size) {
 void initialize_database() {
     int rc = sqlite3_open("bank.db", &db);
     if (rc) {
-        std::cerr << "Can't open database: " << sqlite3_errmsg(db) << std::endl;
+        cerr << "Can't open database: " << sqlite3_errmsg(db) << endl;
         exit(EXIT_FAILURE);
     }
 
@@ -45,16 +47,23 @@ void initialize_database() {
                                           "amount REAL NOT NULL,"
                                           "timestamp DATETIME DEFAULT CURRENT_TIMESTAMP);";
 
+    const char *sql_create_clients = "CREATE TABLE IF NOT EXISTS clients ("
+                                      "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                                      "ip_address TEXT NOT NULL,"
+                                      "port INTEGER NOT NULL,"
+                                      "connected_at DATETIME DEFAULT CURRENT_TIMESTAMP);";
+
     char result[MAX_BUFFER_SIZE];
     execute_sql(sql_create_accounts, result, sizeof(result));
     execute_sql(sql_create_transactions, result, sizeof(result));
+    execute_sql(sql_create_clients, result, sizeof(result)); // Create clients table
 }
 
 int generate_account_number() {
     return 1000000 + rand() % 9000000;
 }
 
-void create_account(const std::string &name, char *result, size_t result_size) {
+void create_account(const string &name, char *result, size_t result_size) {
     int account_number;
     char sql[MAX_SQL_LENGTH];
 
@@ -131,7 +140,14 @@ void get_transactions(int account_number, char *result, size_t result_size) {
     sqlite3_finalize(stmt);
 }
 
-void handle_client(int client_socket) {
+void handle_client(int client_socket, const char *ip_address, int port) {
+    char sql[MAX_SQL_LENGTH];
+    char result[MAX_BUFFER_SIZE];
+
+    // Log client connection
+    snprintf(sql, MAX_SQL_LENGTH, "INSERT INTO clients (ip_address, port) VALUES ('%s', %d);", ip_address, port);
+    execute_sql(sql, result, sizeof(result));
+
     char buffer[MAX_BUFFER_SIZE] = {0};
     char response[MAX_BUFFER_SIZE] = {0};
 
@@ -144,12 +160,12 @@ void handle_client(int client_socket) {
             break;
         }
 
-        std::string command;
+        string command;
         int account_number;
         double amount;
-        std::string name;
+        string name;
 
-        std::istringstream iss(buffer);
+        istringstream iss(buffer);
         iss >> command;
 
         if (command == "CREATE") {
@@ -165,13 +181,15 @@ void handle_client(int client_socket) {
             iss >> account_number;
             get_transactions(account_number, response, sizeof(response));
         } else if (command == "EXIT") {
-            strcpy(response, "Goodbye!");
+            strcpy(response, "Goodbye!\n");  // Add newline for exit command
             send(client_socket, response, strlen(response), 0);
             break;
         } else {
-            strcpy(response, "Invalid command");
+            strcpy(response, "Invalid command\n");  // Add newline for invalid command
         }
 
+        // Append newline to the response
+        strcat(response, "\n"); // Ensure cursor goes to the next line after each response
         send(client_socket, response, strlen(response), 0);
     }
 
@@ -211,7 +229,7 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    std::cout << "Bank server is running on port " << PORT << std::endl;
+    cout << "Bank server is running on port " << PORT << endl;
 
     while (true) {
         if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t *)&addrlen)) < 0) {
@@ -219,12 +237,12 @@ int main() {
             continue;
         }
 
-        std::cout << "New client connected: " << inet_ntoa(address.sin_addr) << ":" << ntohs(address.sin_port) << std::endl;
+        cout << "New client connected: " << inet_ntoa(address.sin_addr) << ":" << ntohs(address.sin_port) << endl;
 
         pid_t pid = fork();
         if (pid == 0) {
             close(server_fd);
-            handle_client(new_socket);
+            handle_client(new_socket, inet_ntoa(address.sin_addr), ntohs(address.sin_port)); // Pass IP and port
             exit(0);
         } else {
             close(new_socket);
