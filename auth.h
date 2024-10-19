@@ -8,7 +8,7 @@
 #include <sstream>
 #include <iomanip>
 
-// Function to hash password using PBKDF2
+
 std::string hashPassword(const std::string &password, const std::string &salt) {
     const int iterations = 10000;
     unsigned char hash[EVP_MAX_MD_SIZE];
@@ -29,7 +29,7 @@ std::string hashPassword(const std::string &password, const std::string &salt) {
     return ss.str();
 }
 
-// Function to generate a random salt
+
 std::string generateSalt(int length = 16) {
     static const char alphanum[] =
         "0123456789"
@@ -46,7 +46,7 @@ std::string generateSalt(int length = 16) {
     return salt;
 }
 
-// Function to generate OTP
+
 std::string generateOTP() {
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -54,9 +54,9 @@ std::string generateOTP() {
     return std::to_string(dis(gen));
 }
 
-// Function to verify OTP (placeholder, actual implementation may vary)
+
 bool verifyOTP(const std::string& user_otp, const std::string& stored_otp) {
     return user_otp == stored_otp;
 }
 
-#endif // AUTH_H
+#endif
